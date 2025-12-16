@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Microphone usage description -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Wispr Flow needs access to your microphone to transcribe your speech to text.</string>
+  
+  <!-- Speech recognition -->
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Wispr Flow uses speech recognition to convert your voice into text.</string>
+  
+  <!-- Accessibility for text insertion -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Wispr Flow needs accessibility permission to insert transcribed text into other applications.</string>
+</dict>
+</plist>
