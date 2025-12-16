@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { RecordingState } from "./types/deepgram";
-import { useSpeechRecognition } from "./hooks/useSpeechRecognition";
+import { useDeepgram } from "./hooks/useDeepgram";
+import { useAudioRecorder } from "./hooks/useAudioRecorder";
 import { RecordingIndicator } from "./components/RecordingIndicator";
 import { TranscriptDisplay } from "./components/TranscriptDisplay";
 
@@ -13,8 +14,37 @@ function App() {
 
   const timerRef = useRef<number | null>(null);
 
-  // Initialize speech recognition hook
-  const speechRecognition = useSpeechRecognition();
+  // Initialize hooks
+  const {
+    connect: connectDeepgram,
+    disconnect: disconnectDeepgram,
+    sendAudio,
+    transcript: finalTranscript,
+    interimTranscript,
+    error: deepgramError,
+    clearTranscript
+  } = useDeepgram({
+    apiKey: import.meta.env.VITE_DEEPGRAM_API_KEY || 'c04d024efd60b2a8b8e39902dd63437c62248f79', // Fallback for dev
+    model: 'nova-2',
+    language: 'en-US',
+  });
+
+  const { startRecording: startMic, stopRecording: stopMic, error: micError } = useAudioRecorder();
+
+  // Handle recording state consistency
+  useEffect(() => {
+    if (deepgramError) {
+      setErrorMessage(deepgramError);
+      setRecordingState(RecordingState.ERROR);
+      stopMic();
+      disconnectDeepgram();
+    }
+    if (micError) {
+      setErrorMessage(micError);
+      setRecordingState(RecordingState.ERROR);
+      disconnectDeepgram();
+    }
+  }, [deepgramError, micError, stopMic, disconnectDeepgram]);
 
   // Handle recording timer
   useEffect(() => {
@@ -40,68 +70,64 @@ function App() {
   }, [recordingState]);
 
   // Start recording
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback(async () => {
     if (recordingState !== RecordingState.IDLE) return;
 
-    setRecordingState(RecordingState.RECORDING);
-    setErrorMessage(null);
+    try {
+      setRecordingState(RecordingState.RECORDING);
+      setErrorMessage(null);
+      clearTranscript(); // Clear previous session
 
-    // Start speech recognition
-    speechRecognition.startListening();
-  }, [recordingState, speechRecognition]);
+      // 1. Connect to Deepgram
+      connectDeepgram();
+
+      // 2. Start Microphone and stream to Deepgram
+      // Note: We don't wait for isConnected true here because we want to start capturing immediately
+      // The socket logic buffers or handles the initial delay
+      await startMic((audioData) => {
+        sendAudio(audioData);
+      });
+
+    } catch (err) {
+      console.error("Failed to start recording:", err);
+      setErrorMessage("Failed to start recording");
+      setRecordingState(RecordingState.ERROR);
+    }
+  }, [recordingState, connectDeepgram, startMic, sendAudio, clearTranscript]);
 
   // Stop recording
   const stopRecording = useCallback(() => {
     if (recordingState !== RecordingState.RECORDING) return;
 
     setRecordingState(RecordingState.PROCESSING);
-    speechRecognition.stopListening();
 
-    // Stay in processing state longer to give speech recognition time to finalize
-    // Check if we have a transcript before marking complete
-    const checkTranscript = setInterval(() => {
-      if (speechRecognition.transcript && speechRecognition.transcript.trim().length > 0) {
-        clearInterval(checkTranscript);
-        setRecordingState(RecordingState.COMPLETE);
-      }
-    }, 100);
+    // Stop mic first
+    stopMic();
 
-    // Fallback: Mark complete after 2 seconds even if no transcript
+    // Wait a bit for final transcript then disconnect
     setTimeout(() => {
-      clearInterval(checkTranscript);
-      if (speechRecognition.transcript && speechRecognition.transcript.trim().length > 0) {
+      disconnectDeepgram();
+
+      if (finalTranscript || interimTranscript) {
         setRecordingState(RecordingState.COMPLETE);
       } else {
-        // No transcript received
-        setErrorMessage("No speech detected. Please try again.");
-        setRecordingState(RecordingState.ERROR);
+        // Even if empty, we might want to go to complete or stay in error if truly nothing
+        // But usually getting here means success flow
+        setRecordingState(RecordingState.COMPLETE);
       }
-    }, 2000);
-  }, [recordingState, speechRecognition]);
+    }, 1500);
 
-  // Handle errors from speech recognition
-  useEffect(() => {
-    if (speechRecognition.error) {
-      setErrorMessage(`Speech Recognition Error: ${speechRecognition.error}`);
-      setRecordingState(RecordingState.ERROR);
-    }
-  }, [speechRecognition.error]);
+  }, [recordingState, stopMic, disconnectDeepgram, finalTranscript, interimTranscript]);
 
   // Insert text with countdown
   const handleInsertText = async () => {
-    if (!speechRecognition.transcript) return;
+    const textToInsert = finalTranscript || interimTranscript;
+    if (!textToInsert) return;
 
     try {
-      // Show countdown state
       setRecordingState(RecordingState.PROCESSING);
-
-      // 3 second countdown to let user switch windows
       await new Promise(resolve => setTimeout(resolve, 3000));
-
-      // Insert the text
-      await invoke("type_text", { text: speechRecognition.transcript });
-
-      // Reset to idle after inserting
+      await invoke("type_text", { text: textToInsert });
       setRecordingState(RecordingState.IDLE);
     } catch (error) {
       console.error("Error inserting text:", error);
@@ -110,12 +136,14 @@ function App() {
     }
   };
 
+
   // Copy to clipboard
   const handleCopy = async () => {
-    if (!speechRecognition.transcript) return;
+    const textToCopy = finalTranscript || interimTranscript;
+    if (!textToCopy) return;
 
     try {
-      await navigator.clipboard.writeText(speechRecognition.transcript);
+      await navigator.clipboard.writeText(textToCopy);
     } catch (error) {
       console.error("Error copying to clipboard:", error);
       setErrorMessage("Failed to copy to clipboard");
@@ -127,6 +155,7 @@ function App() {
     setRecordingState(RecordingState.IDLE);
     setErrorMessage(null);
     setElapsedTime(0);
+    clearTranscript();
   };
 
   return (
@@ -140,8 +169,8 @@ function App() {
         <RecordingIndicator state={recordingState} elapsedTime={elapsedTime} />
 
         <TranscriptDisplay
-          finalTranscript={speechRecognition.transcript}
-          interimTranscript={speechRecognition.interimTranscript}
+          finalTranscript={finalTranscript}
+          interimTranscript={interimTranscript}
         />
 
         {errorMessage && (
@@ -167,7 +196,7 @@ function App() {
           {recordingState === RecordingState.PROCESSING && (
             <div className="processing-indicator">
               <div className="spinner"></div>
-              <p>{speechRecognition.transcript ? "Switch to your app... Inserting in 3s" : "Processing speech..."}</p>
+              <p>{(finalTranscript || interimTranscript) ? "Switch to your app... Inserting in 3s" : "Processing speech..."}</p>
             </div>
           )}
 
@@ -177,7 +206,7 @@ function App() {
             </button>
           )}
 
-          {recordingState === RecordingState.COMPLETE && speechRecognition.transcript && (
+          {recordingState === RecordingState.COMPLETE && (finalTranscript || interimTranscript) && (
             <div className="action-buttons">
               <button className="btn btn-success" onClick={handleInsertText}>
                 Insert Text
@@ -193,10 +222,11 @@ function App() {
         </div>
 
         <div className="usage-hint">
-          {recordingState === RecordingState.COMPLETE
-            ? "Press Ctrl+I to insert text, or use buttons below"
-            : "Click \"Start Recording\" to begin voice transcription"
-          }
+          {recordingState === RecordingState.RECORDING && "Listening..."}
+          {recordingState === RecordingState.PROCESSING && "Processing..."}
+          {recordingState === RecordingState.COMPLETE && "Press Insert Text to use transcript"}
+          {recordingState === RecordingState.IDLE && "Click \"Start Recording\" to begin voice transcription"}
+          {recordingState === RecordingState.ERROR && "Check error message above"}
         </div>
       </main>
     </div>

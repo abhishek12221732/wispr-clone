@@ -9,6 +9,7 @@ interface UseDeepgramReturn {
     connect: () => void;
     disconnect: () => void;
     sendAudio: (audioData: Blob) => void;
+    clearTranscript: () => void;
 }
 
 /**
@@ -36,17 +37,22 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
                 language: config.language || 'en-US',
                 punctuate: String(config.punctuate ?? true),
                 interim_results: String(config.interim_results ?? true),
-                encoding: 'linear16',
-                sample_rate: String(config.sample_rate || 16000),
-                channels: String(config.channels || 1),
-                token: config.apiKey, // API key as query parameter
+                // token is now sent via subprotocol
             });
 
             const wsUrl = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
-            console.log('WebSocket URL (with token):', wsUrl.replace(config.apiKey, '***'));
+            console.log('Connecting to Deepgram URL:', wsUrl);
 
-            // Create WebSocket - no subprotocol needed when token is in URL
-            const ws = new WebSocket(wsUrl);
+            // Clean the key
+            const finalKey = config.apiKey?.trim();
+
+            if (!finalKey) {
+                throw new Error("Deepgram API Key is missing");
+            }
+
+            // Create WebSocket with 'token' subprotocol for auth
+            // This is often more reliable than query params in some environments
+            const ws = new WebSocket(wsUrl, ['token', finalKey]);
             wsRef.current = ws;
 
             ws.onopen = () => {
@@ -58,29 +64,56 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('Received message:', data);
 
-                    // Handle metadata
-                    if (data.metadata) {
-                        console.log('Metadata:', data.metadata);
+                    // Handle standalone metadata messages
+                    if (data.type === 'Metadata') {
                         return;
                     }
 
-                    // Handle transcript
-                    if (data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
-                        const transcriptText = data.channel.alternatives[0].transcript;
+                    if (data.type === 'Results') {
+                        console.log('Full Result:', JSON.stringify(data)); // Uncomment if needed, but reducing spam
+                    }
 
-                        if (transcriptText && transcriptText.trim().length > 0) {
-                            if (data.is_final) {
-                                // Final transcript
-                                setTranscript(prev => prev ? `${prev} ${transcriptText}` : transcriptText);
-                                setInterimTranscript('');
-                                console.log('Final transcript:', transcriptText);
-                            } else {
-                                // Interim result
-                                setInterimTranscript(transcriptText);
-                                console.log('Interim transcript:', transcriptText);
-                            }
+                    // Handle transcript - supports multiple JSON structures
+                    let transcriptText = '';
+                    let isFinal = data.is_final;
+
+                    if (data.channel) {
+                        const alternatives = data.channel.alternatives;
+                        if (alternatives && alternatives.length > 0) {
+                            transcriptText = alternatives[0].transcript;
+                            console.log('Parsed from data.channel:', transcriptText);
+                        }
+                    } else if (data.results && data.results.channels && data.results.channels.length > 0) {
+                        // Fallback structure
+                        const alternatives = data.results.channels[0].alternatives;
+                        if (alternatives && alternatives.length > 0) {
+                            transcriptText = alternatives[0].transcript;
+                            console.log('Parsed from data.results:', transcriptText);
+                        }
+                    }
+
+                    // Log structure if finding text fails but type is Results
+                    if (data.type === 'Results' && !transcriptText) {
+                        console.log('Result message keys:', Object.keys(data));
+                        if (data.channel) console.log('Channel keys:', Object.keys(data.channel));
+                        if (data.channel && data.channel.alternatives) console.log('Alternatives:', JSON.stringify(data.channel.alternatives));
+                    }
+
+                    if (transcriptText) {
+                        console.log('Found transcript:', transcriptText, 'is_final:', isFinal);
+                    }
+
+                    if (transcriptText && transcriptText.trim().length > 0) {
+                        if (isFinal) {
+                            // Final transcript
+                            setTranscript(prev => prev ? `${prev} ${transcriptText}` : transcriptText);
+                            setInterimTranscript('');
+                            console.log('Final transcript:', transcriptText);
+                        } else {
+                            // Interim result
+                            setInterimTranscript(transcriptText);
+                            console.log('Interim transcript:', transcriptText);
                         }
                     }
                 } catch (err) {
@@ -127,12 +160,20 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
             try {
                 // Send raw audio data
                 const arrayBuffer = await audioData.arrayBuffer();
-                wsRef.current.send(arrayBuffer);
+                if (wsRef.current.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(arrayBuffer);
+                    // console.log(`Sent audio chunk: ${arrayBuffer.byteLength} bytes`);
+                }
             } catch (err) {
                 console.error('Error sending audio:', err);
                 setError('Failed to send audio data');
             }
         }
+    }, []);
+
+    const clearTranscript = useCallback(() => {
+        setTranscript('');
+        setInterimTranscript('');
     }, []);
 
     // Cleanup on unmount
@@ -150,5 +191,6 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
         connect,
         disconnect,
         sendAudio,
+        clearTranscript,
     };
 }

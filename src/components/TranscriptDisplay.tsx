@@ -22,7 +22,9 @@ export function TranscriptDisplay({ finalTranscript, interimTranscript }: Transc
         <div className="transcript-display" ref={containerRef}>
             {!finalTranscript && !interimTranscript ? (
                 <div className="transcript-placeholder">
-                    Click "Start Recording" to begin...
+                    {/* Placeholder content handled by parent usage-hint usually, but we can make this neutral */}
+                    <div className="placeholder-icon">🎙️</div>
+                    <p>Ready to transcribe</p>
                 </div>
             ) : (
                 <div className="transcript-content">

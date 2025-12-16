@@ -36,28 +36,35 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
                 throw new Error('MediaDevices API not available');
             }
 
-            // Request microphone access
+            // Request microphone access - Disable processing to inspect raw signal
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     channelCount: 1,
-                    sampleRate: 16000,
+                    // sampleRate: 16000, 
                     echoCancellation: true,
                     noiseSuppression: true,
+                    autoGainControl: true,
                 },
             });
-
-            console.log('Microphone access granted!');
-            console.log('Audio tracks:', stream.getAudioTracks().length);
 
             audioStreamRef.current = stream;
             onAudioDataRef.current = onAudioData;
 
             // Create MediaRecorder instance
-            const mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm;codecs=opus',
-            });
+            let mimeType = 'audio/webm';
+            if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                mimeType = 'audio/webm;codecs=opus';
+            } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                mimeType = 'audio/webm';
+            } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                mimeType = 'audio/mp4';
+            }
 
-            console.log('MediaRecorder created, MIME type:', mediaRecorder.mimeType);
+            console.log(`MediaRecorder created, MIME type: ${mimeType}`);
+            const mediaRecorder = new MediaRecorder(stream, {
+                mimeType,
+                audioBitsPerSecond: 128000,
+            });
             mediaRecorderRef.current = mediaRecorder;
 
             // Handle audio data chunks
@@ -68,8 +75,8 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
                 }
             };
 
-            // Start recording with small time slices for real-time streaming
-            mediaRecorder.start(100); // 100ms chunks
+            // Start recording with larger time slices for better framing
+            mediaRecorder.start(250); // 250ms chunks
             console.log('MediaRecorder started');
 
             setState({ isRecording: true, error: null });
@@ -86,6 +93,11 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
         }
 
         if (audioStreamRef.current) {
+            // Cleanup volume monitoring
+            const stream = audioStreamRef.current as any;
+            if (stream.volumeInterval) clearInterval(stream.volumeInterval);
+            if (stream.audioContext) stream.audioContext.close();
+
             audioStreamRef.current.getTracks().forEach((track) => track.stop());
             audioStreamRef.current = null;
         }
