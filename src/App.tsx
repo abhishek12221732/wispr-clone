@@ -111,9 +111,9 @@ function App() {
       if (finalTranscript || interimTranscript) {
         setRecordingState(RecordingState.COMPLETE);
       } else {
-        // Even if empty, we might want to go to complete or stay in error if truly nothing
-        // But usually getting here means success flow
-        setRecordingState(RecordingState.COMPLETE);
+        // If no text was captured, go back to IDLE so user can try again easily
+        setRecordingState(RecordingState.IDLE);
+        setErrorMessage("No speech detected");
       }
     }, 1500);
 
