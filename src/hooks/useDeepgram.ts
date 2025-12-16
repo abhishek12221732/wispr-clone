@@ -23,15 +23,14 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
     const [error, setError] = useState<string | null>(null);
 
     const wsRef = useRef<WebSocket | null>(null);
+    const audioQueueRef = useRef<Blob[]>([]);
 
     const connect = useCallback(() => {
         try {
             console.log('Connecting to Deepgram with native WebSocket...');
             console.log('API Key present:', !!config.apiKey);
 
-            // Build WebSocket URL with query parameters
-            // IMPORTANT: API key goes in query parameter 'token' for browser WebSocket
-            // (Browser WebSocket cannot send Authorization headers)
+            // ... (setup params) ...
             const params = new URLSearchParams({
                 model: config.model || 'nova-2',
                 language: config.language || 'en-US',
@@ -50,8 +49,6 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
                 throw new Error("Deepgram API Key is missing");
             }
 
-            // Create WebSocket with 'token' subprotocol for auth
-            // This is often more reliable than query params in some environments
             const ws = new WebSocket(wsUrl, ['token', finalKey]);
             wsRef.current = ws;
 
@@ -59,7 +56,23 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
                 console.log('WebSocket connection opened');
                 setIsConnected(true);
                 setError(null);
+
+                // Flush audio queue
+                const queue = audioQueueRef.current;
+                if (queue.length > 0) {
+                    console.log(`Flushing ${queue.length} buffered audio chunks`);
+                    queue.forEach(blob => {
+                        // Resend buffered blob
+                        // We need to convert to array buffer again inside the loop or just process directly
+                        // To allow async, we might need a simpler loop or just fire and forget
+                        blob.arrayBuffer().then(buf => {
+                            if (ws.readyState === WebSocket.OPEN) ws.send(buf);
+                        });
+                    });
+                    audioQueueRef.current = [];
+                }
             };
+            // ... (rest of connect) ...
 
             ws.onmessage = (event) => {
                 try {
@@ -168,6 +181,10 @@ export function useDeepgram(config: DeepgramConfig): UseDeepgramReturn {
                 console.error('Error sending audio:', err);
                 setError('Failed to send audio data');
             }
+        } else if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
+            // Buffer data while connecting
+            // console.log('Buffering audio chunk...');
+            audioQueueRef.current.push(audioData);
         }
     }, []);
 
