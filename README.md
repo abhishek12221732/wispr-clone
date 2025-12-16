@@ -2,7 +2,7 @@
 
 A functional voice-to-text desktop application built with Tauri and React. Capture your voice and insert transcribed text into any application.
 
-Demo Video : (Google Drive Link)[https://drive.google.com/file/d/1hcZ7SzjQfRusuFlxoKWMWhxHZt94ieG9/view?usp=sharing]
+Demo Video : [Google Drive Link](https://drive.google.com/file/d/1hcZ7SzjQfRusuFlxoKWMWhxHZt94ieG9/view?usp=sharing)
 
 ## 🎯 Features
 
