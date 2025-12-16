@@ -65,6 +65,24 @@ Demo Video : [Google Drive Link](https://drive.google.com/file/d/1hcZ7SzjQfRusuF
 - **Automation**: `Enigo` (Rust crate for native input simulation)
 - **Audio**: Web Audio API (MediaRecorder with raw stream processing)
 
+## 🧠 Architecture & Key Decisions
+
+- **Why Native WebSocket?**  
+  Tauri's default HTTP client doesn't support full-duplex streaming efficiently. We implemented a **native WebSocket client** within React to connect directly to `wss://api.deepgram.com`.
+  - **Auth Challenge**: Browsers prevent sending custom headers (like `Authorization`) in WebSocket handshakes. We solved this by using the **WebSocket Subprotocol** standard (`['token', 'YOUR_KEY']`) to securely pass credentials.
+  - **Reliability**: Implemented a custom **Audio Buffer Queue** to handle race conditions where the microphone starts before the socket connection is fully established, preventing data loss.
+
+- **Why Enigo (Rust)?**  
+  Web applications are sandboxed and purely strictly cannot control other windows. We utilize Tauri's IPC bridge (`invoke`) to offload text insertion to **Enigo**, a Rust crate that simulates OS-level input events.
+  - This allows Wispr Flow to type into **any** active application (VS Code, Notepad, Slack, etc.) just like a physical keyboard.
+
+- **Audio Pipeline Strategy**  
+  - **Raw Capture**: We bypass aggressive browser audio pre-processing (Echo Cancellation/Noise Suppression) initially, but re-enable them dynamically based on the environment.
+  - **Native Sample Rate**: Instead of forcing a standard 16kHz resampling (which causes artifacts in Chrome), we capture at the hardware's native rate (e.g., 48kHz) and rely on the Opus codec within the WebM container to handle the negotiation.
+
+- **Frontend State Machine**
+  - We avoided complex global state libraries (Redux) in favor of a strictly typed **Finite State Machine** (`IDLE` -> `RECORDING` -> `PROCESSING` -> `COMPLETE`) using React Hooks. This ensures the UI never enters an invalid state (e.g., trying to insert text while recording).
+
 ## ⚠️ Known Limits
 
 - **Focus Required**: For text insertion, you must ensure the cursor is active in the target app within the countdown window.
